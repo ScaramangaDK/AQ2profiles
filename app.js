@@ -2,18 +2,13 @@
 (function(){
   'use strict';
 
-  // ---- CONFIG ----
-  // Prefer env-injected values (e.g. via Netlify/Vite). Fallback to literals for quick local tests.
-  const SUPABASE_URL = window.SUPABASE_URL || (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || 'PASTE_YOUR_SUPABASE_URL';
-  const SUPABASE_ANON = window.SUPABASE_ANON || (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || 'PASTE_YOUR_SUPABASE_ANON_KEY';
-  const BUCKET = 'profile-pics';
+// ---- CONFIG ----
+// Hard-coded values for quick testing — replace with your real Supabase URL and anon key.
+const SUPABASE_URL  = 'https://kkragzcfhsxajoorsqhs.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrcmFnemNmaHN4YWpvb3JzcWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwOTQ4MzEsImV4cCI6MjA3MDY3MDgzMX0.5ca3Hl_I2FfnwSQc7DrMprrxMtvIIC2Inhl4nJt6hu0';
+const BUCKET = 'profile-pics';
 
-  if (SUPABASE_URL.startsWith('PASTE_')) {
-    console.warn('Supabase keys not set. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or set window.SUPABASE_URL/ANON.');
-  }
-
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
-
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
   // ---- UTIL ----
   const $ = (id)=>document.getElementById(id);
   const escapeHtml = (s)=> String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
