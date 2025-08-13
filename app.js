@@ -1,0 +1,288 @@
+// app.js — Phase 2 (Supabase + Auth + CRUD + Storage)
+(function(){
+  'use strict';
+
+  // ---- CONFIG ----
+  // Prefer env-injected values (e.g. via Netlify/Vite). Fallback to literals for quick local tests.
+  const SUPABASE_URL = window.SUPABASE_URL || (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || 'PASTE_YOUR_SUPABASE_URL';
+  const SUPABASE_ANON = window.SUPABASE_ANON || (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || 'PASTE_YOUR_SUPABASE_ANON_KEY';
+  const BUCKET = 'profile-pics';
+
+  if (SUPABASE_URL.startsWith('PASTE_')) {
+    console.warn('Supabase keys not set. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY or set window.SUPABASE_URL/ANON.');
+  }
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+  // ---- UTIL ----
+  const $ = (id)=>document.getElementById(id);
+  const escapeHtml = (s)=> String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const calcEdpi = (dpi, sens)=>{ const d=Number(dpi)||0; const s=Number(sens)||0; return (d&&s)? Math.round(d*s):''; };
+
+  // Placeholder SVG logo
+  function loadLogo(){
+    const img=$('logoImg');
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240">\
+      <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#ef4444"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs>\
+      <rect width="100%" height="100%" fill="#111"/>\
+      <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" fill="url(#g)" font-size="48" font-family="Arial Black">AQ2</text>\
+    </svg>';
+    img.src = 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+  }
+
+  // ---- AUTH ----
+  async function refreshSessionUI(){
+    const { data: { user } } = await sb.auth.getUser();
+    const logoutBtn = $('logoutBtn');
+    const loginBtn = $('loginBtn');
+    const emailInput = $('emailInput');
+    const roleInd = $('roleIndicator');
+
+    if (user){
+      logoutBtn.style.display = '';
+      loginBtn.style.display = 'none';
+      emailInput.style.display = 'none';
+      roleInd.textContent = `Signed in as ${user.email}`;
+      $('addBtn').disabled = false;
+    } else {
+      logoutBtn.style.display = 'none';
+      loginBtn.style.display = '';
+      emailInput.style.display = '';
+      roleInd.textContent = 'Phase 2 – Live (Supabase)';
+      $('addBtn').disabled = true; // create requires auth
+    }
+  }
+
+  $('loginBtn').addEventListener('click', async () => {
+    const email = $('emailInput').value.trim();
+    if(!email){ alert('Enter your email'); return; }
+    const { error } = await sb.auth.signInWithOtp({ email });
+    if (error) alert(error.message); else alert('Check your email for the login link.');
+  });
+
+  $('logoutBtn').addEventListener('click', async () => {
+    await sb.auth.signOut();
+  });
+
+  sb.auth.onAuthStateChange((_event, _session)=>{
+    refreshSessionUI();
+    loadProfiles();
+  });
+
+  // ---- DATA ----
+  async function loadProfiles(){
+    const tbody = $('profilesBody');
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>';
+
+    const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending:false });
+    if (error){ tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">${escapeHtml(error.message)}</td></tr>`; return; }
+
+    const term = ($('searchBar').value||'').toLowerCase();
+    const rows = (data||[]).filter(p => {
+      const t=[p.nickname,p.screen_hz,p.headphones,p.mouse,p.keyboard,p.dpi,p.sens,p.zoom,(p.cfg_name||'')].join(' ').toLowerCase();
+      return !term || t.indexOf(term)!==-1;
+    });
+
+    if(!rows.length){ tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">No matches.</td></tr>'; return; }
+
+    const { data: { user } } = await sb.auth.getUser();
+
+    tbody.innerHTML = rows.map(p => {
+      const mine = user && p.owner === user.id;
+      const cfgCell = p.cfg_text ? '<button class="secondary" data-action="viewcfg" data-id="'+p.id+'">View CFG</button>' : '<span class="muted">—</span>';
+      const actions = mine
+        ? '<button class="secondary" data-action="edit" data-id="'+p.id+'">Edit</button> <button class="warn" data-action="delete" data-id="'+p.id+'">Delete</button>'
+        : '<span class="muted">—</span>';
+      return '<tr>'+
+        '<td><a class="nick" data-id="'+p.id+'">'+escapeHtml(p.nickname||'')+'</a></td>'+
+        '<td>'+escapeHtml(p.screen_hz||'')+'</td>'+
+        '<td>'+escapeHtml(p.headphones||'')+'</td>'+
+        '<td>'+escapeHtml(p.mouse||'')+'</td>'+
+        '<td>'+escapeHtml(p.keyboard||'')+'</td>'+
+        '<td class="num">'+(p.dpi||'')+'</td>'+
+        '<td class="num">'+(p.sens||'')+'</td>'+
+        '<td class="num">'+calcEdpi(p.dpi,p.sens)+'</td>'+
+        '<td class="center narrow">'+(p.zoom||'')+'</td>'+
+        '<td>'+cfgCell+'</td>'+
+        '<td style="text-align:right">'+actions+'</td>'+
+      '</tr>';
+    }).join('');
+  }
+
+  $('searchBar').addEventListener('input', loadProfiles);
+
+  // Delegated table actions
+  $('profilesBody').addEventListener('click', async (e)=>{
+    const a = e.target.closest('a.nick');
+    if(a){ const id = a.getAttribute('data-id'); openPlayer(id); return; }
+    const btn = e.target.closest('button'); if(!btn) return;
+    const id = btn.getAttribute('data-id');
+    const action = btn.getAttribute('data-action');
+    if(action==='viewcfg'){
+      const { data, error } = await sb.from('profiles').select('cfg_text').eq('id', id).single();
+      if(error) alert(error.message); else alert(data.cfg_text || 'No CFG uploaded.');
+    } else if(action==='edit'){
+      openEdit(id);
+    } else if(action==='delete'){
+      if(confirm('Delete this profile?')){
+        const { error } = await sb.from('profiles').delete().eq('id', id);
+        if(error) alert(error.message); else loadProfiles();
+      }
+    }
+  });
+
+  async function openPlayer(id){
+    const { data: p, error } = await sb.from('profiles').select('*').eq('id', id).single();
+    if(error || !p) return;
+    $('m_name').textContent = p.nickname||'';
+    $('m_name_inline').textContent = p.nickname||'';
+    $('m_country').textContent = p.country||'';
+    $('m_clan').textContent = p.clan||'';
+    $('m_map').textContent = p.favorite_map||'';
+    $('m_about').textContent = p.about||'';
+    const img = $('m_pic');
+    if(p.pic_url){ img.src=p.pic_url; img.style.objectFit='cover'; img.removeAttribute('width'); img.removeAttribute('height'); }
+    else {
+      const ph = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">'+
+                 '<rect width="100%" height="100%" fill="#0e1220" />'+
+                 '<rect x="0.5" y="0.5" width="299" height="299" fill="none" stroke="#2a2f3d" />'+
+                 '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-size="16" font-family="Arial, Helvetica, sans-serif">No picture available</text>'+
+                 '</svg>';
+      img.src = 'data:image/svg+xml;utf8,'+encodeURIComponent(ph);
+      img.style.objectFit='contain'; img.width=240; img.height=240;
+    }
+    $('playerModal').classList.add('open');
+  }
+  $('closePlayer').addEventListener('click', ()=> $('playerModal').classList.remove('open'));
+
+  // Add/Edit
+  $('addBtn').addEventListener('click', async ()=>{
+    const { data: { user } } = await sb.auth.getUser();
+    if(!user){ alert('Sign in to add a profile.'); return; }
+    openEdit(null);
+  });
+  $('cancelEdit').addEventListener('click', ()=> $('editModal').classList.remove('open'));
+
+  async function readCfg(file){
+    if(!file) return { name:null, text:null };
+    if(file.size > 200*1024) throw new Error('CFG too large (max 200KB).');
+    const text = await file.text();
+    // naive binary check for first bytes
+    for(let i=0;i<Math.min(64,text.length);i++){ if(text.charCodeAt(i)===0) throw new Error('Only text-based .cfg allowed'); }
+    return { name:file.name, text };
+  }
+
+  function openEdit(id){
+    $('editTitle').textContent = id? 'Edit Player' : 'Add Player';
+    $('e_id').value = id||'';
+    $('e_nick').value = '';
+    ['screen','head','mouse','keyboard','dpi','sens','zoom','country','clan','map','about'].forEach(k=> $('e_'+k).value='');
+    $('e_pic').value=''; $('e_cfg').value='';
+
+    if(id){
+      // load existing
+      sb.from('profiles').select('*').eq('id', id).single().then(({data:p,error})=>{
+        if(error||!p) return alert(error?.message||'Not found');
+        $('e_nick').value = p.nickname||'';
+        $('e_screen').value = p.screen_hz||'';
+        $('e_head').value = p.headphones||'';
+        $('e_mouse').value = p.mouse||'';
+        $('e_keyboard').value = p.keyboard||'';
+        $('e_dpi').value = p.dpi||'';
+        $('e_sens').value = p.sens||'';
+        $('e_zoom').value = p.zoom||'';
+        $('e_country').value = p.country||'';
+        $('e_clan').value = p.clan||'';
+        $('e_map').value = p.favorite_map||'';
+        $('e_about').value = p.about||'';
+      });
+    }
+    $('editModal').classList.add('open');
+  }
+
+  $('btnRemovePic').addEventListener('click', async ()=>{
+    const id = $('e_id').value;
+    if(!id){ alert('Open an existing profile to remove its pic.'); return; }
+    const { error } = await sb.from('profiles').update({ pic_url:null }).eq('id', id);
+    if(error) alert(error.message); else { alert('Profile picture removed.'); loadProfiles(); }
+  });
+
+  $('btnRemoveCfg').addEventListener('click', async ()=>{
+    const id = $('e_id').value;
+    if(!id){ alert('Open an existing profile to remove its CFG.'); return; }
+    const { error } = await sb.from('profiles').update({ cfg_text:null, cfg_name:null }).eq('id', id);
+    if(error) alert(error.message); else { alert('CFG removed.'); loadProfiles(); }
+  });
+
+  $('editForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const { data: { user } } = await sb.auth.getUser();
+    if(!user){ alert('Sign in to save.'); return; }
+
+    const id = $('e_id').value || null;
+    const rec = {
+      owner: user.id,
+      nickname: $('e_nick').value.trim(),
+      screen_hz: $('e_screen').value.trim(),
+      headphones: $('e_head').value.trim(),
+      mouse: $('e_mouse').value.trim(),
+      keyboard: $('e_keyboard').value.trim(),
+      dpi: Number($('e_dpi').value)||null,
+      sens: Number($('e_sens').value)||null,
+      zoom: Number($('e_zoom').value)||null,
+      country: $('e_country').value.trim(),
+      clan: $('e_clan').value.trim(),
+      favorite_map: $('e_map').value.trim(),
+      about: $('e_about').value.slice(0,1000)
+    };
+
+    if(!rec.nickname){ alert('Nickname required'); return; }
+
+    // read optional files
+    const picFile = $('e_pic').files[0] || null;
+    const cfgFile = $('e_cfg').files[0] || null;
+
+    try{
+      // upsert base row first (for new id)
+      let rowId = id;
+      if(!rowId){
+        const { data, error } = await sb.from('profiles').insert(rec).select('id').single();
+        if(error) throw error; rowId = data.id;
+      } else {
+        const { error } = await sb.from('profiles').update(rec).eq('id', rowId);
+        if(error) throw error;
+      }
+
+      // handle cfg
+      if(cfgFile){
+        const { name, text } = await readCfg(cfgFile);
+        const { error } = await sb.from('profiles').update({ cfg_name:name, cfg_text:text }).eq('id', rowId);
+        if(error) throw error;
+      }
+
+      // handle picture upload (public URL)
+      if(picFile){
+        if(picFile.size > 1000*1024) throw new Error('Image too large (max 1000KB).');
+        const ext = (picFile.name.split('.').pop()||'jpg').toLowerCase();
+        const path = `${user.id}/${rowId}.${Date.now()}.${ext}`;
+        // If object exists with same name, overwrite: upsert: true
+        const { error: upErr } = await sb.storage.from(BUCKET).upload(path, picFile, { upsert: true, contentType: picFile.type });
+        if(upErr) throw upErr;
+        const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
+        const { error: updErr } = await sb.from('profiles').update({ pic_url: pub.publicUrl }).eq('id', rowId);
+        if(updErr) throw updErr;
+      }
+
+      $('editModal').classList.remove('open');
+      e.target.reset();
+      loadProfiles();
+    } catch(err){
+      alert(err.message || String(err));
+    }
+  });
+
+  // Init
+  function init(){ loadLogo(); refreshSessionUI(); loadProfiles(); }
+  init();
+
+})();
