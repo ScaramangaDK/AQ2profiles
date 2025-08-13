@@ -31,6 +31,8 @@
   a.nick:hover{text-decoration:underline;filter:brightness(1.08)}
   .num{text-align:right}.center{text-align:center}.narrow{min-width:88px;max-width:120px}.small{width:1%;white-space:nowrap}
   .role-indicator{font-size:12px;color:#9ca3af}
+
+  /* Modals */
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:50}
   .modal.open{display:flex}
   .modal-card{width:min(820px,92vw);background:#1a1d29;border:1px solid var(--border);border-radius:12px;padding:18px}
@@ -40,8 +42,11 @@
   pre.code{background:#0b0d0f;padding:10px;border-radius:8px;max-height:420px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)}
   .col>label{display:flex;flex-direction:column;gap:6px;font-weight:600;color:#e2e8f0}
   .col>label>input,.col>label>textarea,.col>label>select{min-height:38px}
+
+  /* Orange labels in profile popup */
   #playerModal .modal-card strong{color:var(--accent)}
   #m_name{color:var(--accent)}
+
   .muted{color:var(--muted)}
 </style>
 </head>
@@ -144,6 +149,18 @@
           <button type="button" id="cancelEdit" class="secondary">Cancel</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- CFG viewer modal (NEW) -->
+  <div id="cfgModal" class="modal" aria-hidden="true">
+    <div class="modal-card">
+      <h3 id="cfgTitle" style="margin-top:0">Config</h3>
+      <pre id="cfgText" class="code" style="max-height:60vh"></pre>
+      <div class="bar" style="justify-content:flex-end;margin-top:12px;gap:8px">
+        <a id="downloadCfg" class="secondary" download>Download</a>
+        <button id="closeCfg" class="secondary">Close</button>
+      </div>
     </div>
   </div>
 
