@@ -11,6 +11,10 @@
   // Admin who can edit everything
   const ADMIN_UID = '920549c3-d37c-40e5-9e6d-221299f373c1'; // <- your admin UUID
 
+  // Logo storage settings
+  const LOGO_BUCKET = 'site-assets';
+  const LOGO_KEY = 'logo.png';
+
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
   // ---- UTIL ----
@@ -18,15 +22,12 @@
   const escapeHtml = (s)=> String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const calcEdpi = (dpi, sens)=>{ const d=Number(dpi)||0; const s=Number(sens)||0; return (d&&s)? Math.round(d*s):''; };
 
-  // Placeholder SVG logo
+  // Placeholder SVG logo (replaced with Supabase URL below)
   function loadLogo(){
     const img=$('logoImg');
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240">\
-      <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#ef4444"/><stop offset="1" stop-color="#f97316"/></linearGradient></defs>\
-      <rect width="100%" height="100%" fill="#111"/>\
-      <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" fill="url(#g)" font-size="48" font-family="Arial Black">AQ2</text>\
-    </svg>';
-    img.src = 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+    // Public URL to your logo file in the 'site-assets' bucket:
+    const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${LOGO_KEY}`;
+    img.src = `${baseUrl}?v=${Date.now()}`; // cache-bust on first load
   }
 
   // ---- AUTH ----
@@ -43,12 +44,15 @@
       emailInput.style.display = 'none';
       roleInd.textContent = `Signed in as ${user.email}`;
       $('addBtn').disabled = false;
+      // admin-only Edit Logo button
+      if ($('editLogoBtn')) $('editLogoBtn').style.display = (user.id === ADMIN_UID) ? '' : 'none';
     } else {
       logoutBtn.style.display = 'none';
       loginBtn.style.display = '';
       emailInput.style.display = '';
       roleInd.textContent = 'Phase 2 – Live (Supabase)';
       $('addBtn').disabled = true; // create requires auth
+      if ($('editLogoBtn')) $('editLogoBtn').style.display = 'none';
     }
   }
 
@@ -68,7 +72,7 @@
     loadProfiles();
   });
 
-  // ---- DATA ----
+  // ---- DATA (table render) ----
   async function loadProfiles(){
     const tbody = $('profilesBody');
     tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>';
@@ -117,8 +121,9 @@
 
   $('searchBar').addEventListener('input', loadProfiles);
 
-  // ---- CFG MODAL (NEW) ----
+  // ---- CFG MODAL (pretty viewer) ----
   let currentCfgUrl = null;
+
   async function openCfgModal(id){
     const { data, error } = await sb.from('profiles')
       .select('nickname,cfg_name,cfg_text')
@@ -126,11 +131,13 @@
     if (error) return alert(error.message);
     if (!data?.cfg_text) return alert('No CFG uploaded.');
 
-    // Fill and open modal
-    $('cfgTitle').textContent = data.cfg_name ? `${data.nickname} — ${data.cfg_name}` : `${data.nickname} — config`;
+    $('cfgTitle').textContent = data.cfg_name
+      ? `${data.nickname} — ${data.cfg_name}`
+      : `${data.nickname} — config`;
+
     $('cfgText').textContent = data.cfg_text;
 
-    // Download link (Blob so filename works everywhere)
+    // Create a blob URL so Download uses the right filename
     if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
     const blob = new Blob([data.cfg_text], { type: 'text/plain' });
     currentCfgUrl = URL.createObjectURL(blob);
@@ -140,6 +147,7 @@
 
     $('cfgModal').classList.add('open');
   }
+
   $('closeCfg').addEventListener('click', () => {
     $('cfgModal').classList.remove('open');
     if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
@@ -152,8 +160,8 @@
     const btn = e.target.closest('button'); if(!btn) return;
     const id = btn.getAttribute('data-id');
     const action = btn.getAttribute('data-action');
+
     if(action==='viewcfg'){
-      // OLD: alert(cfg);  NEW: open modal
       openCfgModal(id);
     } else if(action==='edit'){
       openEdit(id);
@@ -165,6 +173,7 @@
     }
   });
 
+  // ---- Player info modal ----
   async function openPlayer(id){
     const { data: p, error } = await sb.from('profiles').select('*').eq('id', id).single();
     if(error || !p) return;
@@ -189,7 +198,7 @@
   }
   $('closePlayer').addEventListener('click', ()=> $('playerModal').classList.remove('open'));
 
-  // Add/Edit
+  // ---- Add/Edit ----
   $('addBtn').addEventListener('click', async ()=>{
     const { data: { user } } = await sb.auth.getUser();
     if(!user){ alert('Sign in to add a profile.'); return; }
@@ -201,7 +210,6 @@
     if(!file) return { name:null, text:null };
     if(file.size > 200*1024) throw new Error('CFG too large (max 200KB).');
     const text = await file.text();
-    // naive binary check for first bytes
     for(let i=0;i<Math.min(64,text.length);i++){ if(text.charCodeAt(i)===0) throw new Error('Only text-based .cfg allowed'); }
     return { name:file.name, text };
   }
@@ -214,7 +222,6 @@
     $('e_pic').value=''; $('e_cfg').value='';
 
     if(id){
-      // load existing
       sb.from('profiles').select('*').eq('id', id).single().then(({data:p,error})=>{
         if(error||!p) return alert(error?.message||'Not found');
         $('e_nick').value = p.nickname||'';
@@ -272,12 +279,10 @@
 
     if(!rec.nickname){ alert('Nickname required'); return; }
 
-    // read optional files
     const picFile = $('e_pic').files[0] || null;
     const cfgFile = $('e_cfg').files[0] || null;
 
     try{
-      // upsert base row first (for new id)
       let rowId = id;
       if(!rowId){
         const { data, error } = await sb.from('profiles').insert(rec).select('id').single();
@@ -287,19 +292,16 @@
         if(error) throw error;
       }
 
-      // handle cfg (text in DB)
       if(cfgFile){
         const { name, text } = await readCfg(cfgFile);
         const { error } = await sb.from('profiles').update({ cfg_name:name, cfg_text:text }).eq('id', rowId);
         if(error) throw error;
       }
 
-      // handle picture upload (public URL)
       if(picFile){
         if(picFile.size > 1000*1024) throw new Error('Image too large (max 1000KB).');
         const ext = (picFile.name.split('.').pop()||'jpg').toLowerCase();
-        const path = `${user.id}/${rowId}.${Date.now()}.${ext}`;
-        // If object exists with same name, overwrite: upsert: true
+        const path = `${(await sb.auth.getUser()).data.user.id}/${rowId}.${Date.now()}.${ext}`;
         const { error: upErr } = await sb.storage.from(BUCKET).upload(path, picFile, { upsert: true, contentType: picFile.type });
         if(upErr) throw upErr;
         const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
@@ -319,6 +321,45 @@
       }
     }
   });
+
+  // ---- Logo uploader (admin only) ----
+  if ($('editLogoBtn')) {
+    $('editLogoBtn').addEventListener('click', async ()=>{
+      const { data: { user } } = await sb.auth.getUser();
+      if(!user || user.id !== ADMIN_UID){ alert('Only admin can change the logo.'); return; }
+      $('logoModal').classList.add('open');
+    });
+
+    $('cancelLogo').addEventListener('click', ()=>{
+      $('logoModal').classList.remove('open');
+      $('logoFile').value = '';
+    });
+
+    $('saveLogo').addEventListener('click', async ()=>{
+      const { data: { user } } = await sb.auth.getUser();
+      if(!user || user.id !== ADMIN_UID){ alert('Only admin can change the logo.'); return; }
+
+      const file = $('logoFile').files[0];
+      if(!file){ alert('Select an image first.'); return; }
+      if(file.size > 1000*1024){ alert('Image too large (max 1 MB).'); return; }
+
+      try{
+        const { error: upErr } = await sb.storage.from(LOGO_BUCKET)
+          .upload(LOGO_KEY, file, { upsert: true, contentType: file.type });
+        if(upErr) throw upErr;
+
+        // Refresh the header image (cache-bust)
+        const img = $('logoImg');
+        const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${LOGO_KEY}`;
+        img.src = `${baseUrl}?v=${Date.now()}`;
+
+        $('logoModal').classList.remove('open');
+        $('logoFile').value = '';
+      } catch(err){
+        alert(err.message || String(err));
+      }
+    });
+  }
 
   // Init
   function init(){ loadLogo(); refreshSessionUI(); loadProfiles(); }
