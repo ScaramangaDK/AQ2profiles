@@ -2,13 +2,17 @@
 (function(){
   'use strict';
 
-// ---- CONFIG ----
-// Hard-coded values for quick testing — replace with your real Supabase URL and anon key.
-const SUPABASE_URL  = 'https://kkragzcfhsxajoorsqhs.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrcmFnemNmaHN4YWpvb3JzcWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwOTQ4MzEsImV4cCI6MjA3MDY3MDgzMX0.5ca3Hl_I2FfnwSQc7DrMprrxMtvIIC2Inhl4nJt6hu0';
-const BUCKET = 'profile-pics';
+  // ---- CONFIG ----
+  // Hard-coded values for quick testing — replace with your real Supabase URL and anon key.
+  const SUPABASE_URL  = 'https://kkragzcfhsxajoorsqhs.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrcmFnemNmaHN4YWpvb3JzcWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwOTQ4MzEsImV4cCI6MjA3MDY3MDgzMX0.5ca3Hl_I2FfnwSQc7DrMprrxMtvIIC2Inhl4nJt6hu0';
+  const BUCKET = 'profile-pics';
 
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  // Admin who can edit everything
+  const ADMIN_UID = '920549c3-d37c-40e5-9e6d-221299f373c1'; // <- your admin UUID
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
   // ---- UTIL ----
   const $ = (id)=>document.getElementById(id);
   const escapeHtml = (s)=> String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -69,6 +73,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     const tbody = $('profilesBody');
     tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>';
 
+    // include owner so UI can decide admin/ownership
     const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending:false });
     if (error){ tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">${escapeHtml(error.message)}</td></tr>`; return; }
 
@@ -83,11 +88,17 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     const { data: { user } } = await sb.auth.getUser();
 
     tbody.innerHTML = rows.map(p => {
-      const mine = user && p.owner === user.id;
-      const cfgCell = p.cfg_text ? '<button class="secondary" data-action="viewcfg" data-id="'+p.id+'">View CFG</button>' : '<span class="muted">—</span>';
+      // <-- changed: admin can also edit/delete everything
+      const mine = user && (p.owner === user.id || user.id === ADMIN_UID);
+
+      const cfgCell = p.cfg_text
+        ? '<button class="secondary" data-action="viewcfg" data-id="'+p.id+'">View CFG</button>'
+        : '<span class="muted">—</span>';
+
       const actions = mine
         ? '<button class="secondary" data-action="edit" data-id="'+p.id+'">Edit</button> <button class="warn" data-action="delete" data-id="'+p.id+'">Delete</button>'
         : '<span class="muted">—</span>';
+
       return '<tr>'+
         '<td><a class="nick" data-id="'+p.id+'">'+escapeHtml(p.nickname||'')+'</a></td>'+
         '<td>'+escapeHtml(p.screen_hz||'')+'</td>'+
