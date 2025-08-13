@@ -88,7 +88,7 @@
     const { data: { user } } = await sb.auth.getUser();
 
     tbody.innerHTML = rows.map(p => {
-      // <-- changed: admin can also edit/delete everything
+      // admin can also edit/delete everything
       const mine = user && (p.owner === user.id || user.id === ADMIN_UID);
 
       const cfgCell = p.cfg_text
@@ -117,6 +117,34 @@
 
   $('searchBar').addEventListener('input', loadProfiles);
 
+  // ---- CFG MODAL (NEW) ----
+  let currentCfgUrl = null;
+  async function openCfgModal(id){
+    const { data, error } = await sb.from('profiles')
+      .select('nickname,cfg_name,cfg_text')
+      .eq('id', id).single();
+    if (error) return alert(error.message);
+    if (!data?.cfg_text) return alert('No CFG uploaded.');
+
+    // Fill and open modal
+    $('cfgTitle').textContent = data.cfg_name ? `${data.nickname} — ${data.cfg_name}` : `${data.nickname} — config`;
+    $('cfgText').textContent = data.cfg_text;
+
+    // Download link (Blob so filename works everywhere)
+    if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
+    const blob = new Blob([data.cfg_text], { type: 'text/plain' });
+    currentCfgUrl = URL.createObjectURL(blob);
+    const a = $('downloadCfg');
+    a.href = currentCfgUrl;
+    a.download = data.cfg_name || `${data.nickname || 'config'}.cfg`;
+
+    $('cfgModal').classList.add('open');
+  }
+  $('closeCfg').addEventListener('click', () => {
+    $('cfgModal').classList.remove('open');
+    if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
+  });
+
   // Delegated table actions
   $('profilesBody').addEventListener('click', async (e)=>{
     const a = e.target.closest('a.nick');
@@ -125,8 +153,8 @@
     const id = btn.getAttribute('data-id');
     const action = btn.getAttribute('data-action');
     if(action==='viewcfg'){
-      const { data, error } = await sb.from('profiles').select('cfg_text').eq('id', id).single();
-      if(error) alert(error.message); else alert(data.cfg_text || 'No CFG uploaded.');
+      // OLD: alert(cfg);  NEW: open modal
+      openCfgModal(id);
     } else if(action==='edit'){
       openEdit(id);
     } else if(action==='delete'){
@@ -259,7 +287,7 @@
         if(error) throw error;
       }
 
-      // handle cfg
+      // handle cfg (text in DB)
       if(cfgFile){
         const { name, text } = await readCfg(cfgFile);
         const { error } = await sb.from('profiles').update({ cfg_name:name, cfg_text:text }).eq('id', rowId);
@@ -283,7 +311,12 @@
       e.target.reset();
       loadProfiles();
     } catch(err){
-      alert(err.message || String(err));
+      const msg = String(err?.message || err);
+      if (msg.includes('profiles_owner_nickname_unique') || msg.includes('duplicate key') || err?.code === '23505') {
+        alert('You already have a player with that nickname. Try another.');
+      } else {
+        alert(msg);
+      }
     }
   });
 
