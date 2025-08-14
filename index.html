@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Player Profiles – Phase 2</title>
+<title>Player Profiles – Discord Login</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <style>
   :root{ --bg:#0b0d0f; --panel:#121622; --ink:#111723; --border:#2a2f3d; --text:#e5e7eb; --muted:#9ca3af; --accent:#f97316; --accent2:#ef4444; }
@@ -37,7 +37,7 @@
   .profile-pic{max-width:100%;height:auto;border-radius:10px;border:1px solid var(--border);box-shadow:0 10px 18px rgba(0,0,0,.35)}
   .row{display:flex;gap:12px;flex-wrap:wrap}
   .col{flex:1 1 220px}
-  pre.code{background:#0b0d0f;padding:10px;border-radius:8px;max-height:420px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)}
+  pre.code{background:#0b0d0f;padding:10px;border-radius:8px;max-height:60vh;overflow:auto;white-space:pre-wrap;border:1px solid var(--border)}
   .col>label{display:flex;flex-direction:column;gap:6px;font-weight:600;color:#e2e8f0}
   .col>label>input,.col>label>textarea,.col>label>select{min-height:38px}
   #playerModal .modal-card strong{color:var(--accent)}
@@ -51,21 +51,16 @@
       <div class="bar" style="justify-content:space-between">
         <div class="bar">
           <img id="logoImg" class="logo" alt="Logo" />
-          <div>
-            <h1 class="title" style="margin-bottom:4px">Player Profiles</h1>
-            <div id="roleIndicator" class="role-indicator">Phase 2 – Live (Supabase)</div>
-          </div>
+          <h1 class="title" style="margin-bottom:4px">Player Profiles</h1>
         </div>
         <div class="controls">
           <input id="searchBar" type="search" placeholder="Search players..." />
           <div id="authControls" class="bar">
-            <input id="emailInput" type="email" placeholder="you@example.com" style="width:220px" />
-            <button id="loginBtn" class="secondary">Send Magic Link</button>
+            <button id="loginBtn" class="secondary">Login with Discord</button>
             <button id="logoutBtn" class="secondary" style="display:none">Logout</button>
           </div>
-          <button id="addBtn" class="secondary">Add Player</button>
-          <!-- NEW: admin-only logo editor button (shown via JS when admin is logged in) -->
-          <button id="editLogoBtn" class="secondary" style="display:none">Edit Logo</button>
+          <!-- Hidden by default; shown by JS only when logged in -->
+          <button id="addBtn" class="secondary" style="display:none">Add Player</button>
         </div>
       </div>
     </div>
@@ -80,12 +75,12 @@
               <tr>
                 <th>Nickname</th><th>Monitor/Hz</th><th>Headphones</th><th>Mouse</th><th>Keyboard</th>
                 <th class="num small">DPI</th><th class="num small">Sens</th><th class="num small">eDPI</th>
-                <th class="center narrow">Zoom 2x Sens</th><th>CFG</th>
+                <th class="center narrow">Zoom 2x Sens</th><th>CFG</th><th>Paks</th>
                 <th style="text-align:right">Actions</th>
               </tr>
             </thead>
             <tbody id="profilesBody">
-              <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>
+              <tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -134,11 +129,13 @@
           <div class="col"><label>Clan<input id="e_clan"></label></div>
           <div class="col"><label>Favorite Map<input id="e_map"></label></div>
           <div class="col" style="flex:1 1 100%"><label>About Me<textarea id="e_about" maxlength="1000" rows="4" style="resize:vertical"></textarea></label></div>
-          <div class="col"><label>Profile Pic (≤ 1000 KB)<input id="e_pic" type="file" accept="image/*"></label></div>
+          <div class="col"><label>Profile Pic (≤ 5 MB)<input id="e_pic" type="file" accept="image/*"></label></div>
           <div class="col"><label>CFG (text .cfg ≤ 200 KB)<input id="e_cfg" type="file" accept=".cfg,text/plain"></label></div>
+          <div class="col"><label>Personal Pak (.zip/.rar ≤ 50 MB)<input id="e_pak" type="file" accept=".zip,application/zip,.rar,application/x-rar-compressed"></label></div>
           <div class="col" style="display:flex;align-items:end;gap:8px">
             <button type="button" id="btnRemovePic" class="secondary">Remove Pic</button>
             <button type="button" id="btnRemoveCfg" class="secondary">Remove CFG</button>
+            <button type="button" id="btnRemovePak" class="secondary">Remove Pak</button>
           </div>
         </div>
         <div class="bar" style="margin-top:10px;justify-content:flex-end">
@@ -149,32 +146,14 @@
     </div>
   </div>
 
-  <!-- CFG viewer modal -->
+  <!-- CFG viewer modal (nice viewer + download) -->
   <div id="cfgModal" class="modal" aria-hidden="true">
     <div class="modal-card">
       <h3 id="cfgTitle" style="margin-top:0">Config</h3>
-      <pre id="cfgText" class="code" style="max-height:60vh"></pre>
+      <pre id="cfgText" class="code"></pre>
       <div class="bar" style="justify-content:flex-end;margin-top:12px;gap:8px">
         <a id="downloadCfg" class="secondary" download>Download</a>
         <button id="closeCfg" class="secondary">Close</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- NEW: Logo uploader modal -->
-  <div id="logoModal" class="modal" aria-hidden="true">
-    <div class="modal-card">
-      <h3 style="margin-top:0">Update Site Logo</h3>
-      <div class="row">
-        <div class="col">
-          <label>Choose image (≤ 1 MB)
-            <input id="logoFile" type="file" accept="image/*">
-          </label>
-        </div>
-      </div>
-      <div class="bar" style="justify-content:flex-end;margin-top:12px;gap:8px">
-        <button id="saveLogo" class="secondary">Upload</button>
-        <button id="cancelLogo" class="secondary">Cancel</button>
       </div>
     </div>
   </div>
