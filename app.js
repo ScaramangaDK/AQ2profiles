@@ -1,368 +1,523 @@
-// app.js — Phase 2 (Supabase + Auth + CRUD + Storage)
-(function(){
+// app.js — Discord Auth + CRUD + Storage (pics/CFG/paks) + Header Logo
+(function () {
   'use strict';
 
-  // ---- CONFIG ----
-  // Hard-coded values for quick testing — replace with your real Supabase URL and anon key.
-  const SUPABASE_URL  = 'https://kkragzcfhsxajoorsqhs.supabase.co';
-  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrcmFnemNmaHN4YWpvb3JzcWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUwOTQ4MzEsImV4cCI6MjA3MDY3MDgzMX0.5ca3Hl_I2FfnwSQc7DrMprrxMtvIIC2Inhl4nJt6hu0';
-  const BUCKET = 'profile-pics';
+  // ---------- CONFIG ----------
+  // Replace these with your project values (or inject via Netlify env → window.SUPABASE_URL/ANON)
+  const SUPABASE_URL =
+    window.SUPABASE_URL ||
+    'https://wdmpgeegzbzaafhwjqaz.supabase.co'; // <-- put your project URL
+  const SUPABASE_ANON =
+    window.SUPABASE_ANON ||
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndkbXBnZWVnemJ6YWFmaHdqcWF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNjU3NDMsImV4cCI6MjA3MDc0MTc0M30.mNcriLvMZJ6jWUutuMiXrA4PNrvmV1JmzIgxkGP3d0U'; // <-- put your anon public key
 
-  // Admin who can edit everything
-  const ADMIN_UID = '920549c3-d37c-40e5-9e6d-221299f373c1'; // <- your admin UUID
+  // Storage buckets + paths
+  const BUCKET_PICS = 'profile-pics';      // images (max 5 MB)
+  const BUCKET_PAKS = 'player-paks';       // zip/rar (max 50 MB)
+  const BUCKET_ASSETS = 'site-assets';     // public site assets (logo, etc.)
+  const LOGO_PATH = 'logo/header.png';     // inside site-assets bucket
 
-  // Logo storage settings
-  const LOGO_BUCKET = 'site-assets';
-  const LOGO_KEY = 'logo.png';
+  // Limits
+  const MAX_IMG_BYTES = 5 * 1024 * 1024;       // 5 MB
+  const MAX_CFG_BYTES = 200 * 1024;            // 200 KB
+  const MAX_PAK_BYTES = 50 * 1024 * 1024;      // 50 MB
 
+  // Create client
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
-  // ---- UTIL ----
-  const $ = (id)=>document.getElementById(id);
-  const escapeHtml = (s)=> String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const calcEdpi = (dpi, sens)=>{ const d=Number(dpi)||0; const s=Number(sens)||0; return (d&&s)? Math.round(d*s):''; };
+  // ---------- UTIL ----------
+  const $ = (id) => document.getElementById(id);
+  const escapeHtml = (s) =>
+    String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  const calcEdpi = (dpi, sens) => {
+    const d = Number(dpi) || 0;
+    const s = Number(sens) || 0;
+    return d && s ? Math.round(d * s) : '';
+  };
 
-  // Placeholder SVG logo (replaced with Supabase URL below)
-  function loadLogo(){
-    const img=$('logoImg');
-    // Public URL to your logo file in the 'site-assets' bucket:
-    const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${LOGO_KEY}`;
-    img.src = `${baseUrl}?v=${Date.now()}`; // cache-bust on first load
-  }
-
-  // ---- AUTH ----
-  async function refreshSessionUI(){
-    const { data: { user } } = await sb.auth.getUser();
-    const logoutBtn = $('logoutBtn');
-    const loginBtn = $('loginBtn');
-    const emailInput = $('emailInput');
-    const roleInd = $('roleIndicator');
-
-    if (user){
-      logoutBtn.style.display = '';
-      loginBtn.style.display = 'none';
-      emailInput.style.display = 'none';
-      roleInd.textContent = `Signed in as ${user.email}`;
-      $('addBtn').disabled = false;
-      // admin-only Edit Logo button
-      if ($('editLogoBtn')) $('editLogoBtn').style.display = (user.id === ADMIN_UID) ? '' : 'none';
-    } else {
-      logoutBtn.style.display = 'none';
-      loginBtn.style.display = '';
-      emailInput.style.display = '';
-      roleInd.textContent = 'Phase 2 – Live (Supabase)';
-      $('addBtn').disabled = true; // create requires auth
-      if ($('editLogoBtn')) $('editLogoBtn').style.display = 'none';
+  // ---------- HEADER LOGO ----------
+  // Loads logo from Storage: site-assets/logo/header.png → <img id="site-logo">
+  async function loadLogo() {
+    try {
+      const imgEl = $('site-logo');
+      if (!imgEl) return;
+      const { data } = sb.storage.from(BUCKET_ASSETS).getPublicUrl(LOGO_PATH);
+      if (!data || !data.publicUrl) return;
+      // cache-bust once
+      const url = new URL(data.publicUrl);
+      url.searchParams.set('v', Date.now());
+      imgEl.src = url.toString();
+    } catch (e) {
+      // silent
     }
   }
 
-  $('loginBtn').addEventListener('click', async () => {
-    const email = $('emailInput').value.trim();
-    if(!email){ alert('Enter your email'); return; }
-    const { error } = await sb.auth.signInWithOtp({ email });
-    if (error) alert(error.message); else alert('Check your email for the login link.');
-  });
+  // ---------- AUTH (Discord) ----------
+  async function refreshSessionUI() {
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
 
-  $('logoutBtn').addEventListener('click', async () => {
-    await sb.auth.signOut();
-  });
+    const loginBtn = $('loginBtn');   // button that triggers Discord login
+    const logoutBtn = $('logoutBtn'); // logout button
+    const addBtn = $('addBtn');       // "Add Player"
 
-  sb.auth.onAuthStateChange((_event, _session)=>{
+    if (user) {
+      if (loginBtn) loginBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = '';
+      if (addBtn) addBtn.disabled = false;
+
+      const roleInd = $('roleIndicator');
+      if (roleInd) roleInd.textContent = `Signed in as ${user.email || 'Discord user'}`;
+    } else {
+      if (loginBtn) loginBtn.style.display = '';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      if (addBtn) addBtn.disabled = true;
+
+      const roleInd = $('roleIndicator');
+      if (roleInd) roleInd.textContent = '';
+    }
+  }
+
+  // Discord login
+  if ($('loginBtn')) {
+    $('loginBtn').addEventListener('click', async () => {
+      try {
+        const { error } = await sb.auth.signInWithOAuth({
+          provider: 'discord',
+          options: {
+            redirectTo: window.location.origin, // send back to homepage after auth
+          },
+        });
+        if (error) alert(error.message);
+      } catch (e) {
+        alert(String(e));
+      }
+    });
+  }
+
+  if ($('logoutBtn')) {
+    $('logoutBtn').addEventListener('click', async () => {
+      await sb.auth.signOut();
+      // hard refresh after logout so UI resets
+      location.reload();
+    });
+  }
+
+  // react to session changes
+  sb.auth.onAuthStateChange((_evt, _session) => {
     refreshSessionUI();
     loadProfiles();
   });
 
-  // ---- DATA (table render) ----
-  async function loadProfiles(){
+  // ---------- DATA ----------
+  async function loadProfiles() {
     const tbody = $('profilesBody');
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>';
+    if (!tbody) return;
+    tbody.innerHTML =
+      '<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:24px">Loading…</td></tr>';
 
-    // include owner so UI can decide admin/ownership
-    const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending:false });
-    if (error){ tbody.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">${escapeHtml(error.message)}</td></tr>`; return; }
+    const { data, error } = await sb
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    const term = ($('searchBar').value||'').toLowerCase();
-    const rows = (data||[]).filter(p => {
-      const t=[p.nickname,p.screen_hz,p.headphones,p.mouse,p.keyboard,p.dpi,p.sens,p.zoom,(p.cfg_name||'')].join(' ').toLowerCase();
-      return !term || t.indexOf(term)!==-1;
+    if (error) {
+      tbody.innerHTML = `<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">${escapeHtml(
+        error.message
+      )}</td></tr>`;
+      return;
+    }
+
+    const term = (($('searchBar') && $('searchBar').value) || '').toLowerCase();
+    const rows = (data || []).filter((p) => {
+      const t = [
+        p.nickname,
+        p.screen_hz,
+        p.headphones,
+        p.mouse,
+        p.keyboard,
+        p.dpi,
+        p.sens,
+        p.zoom,
+        p.cfg_name || '',
+        p.pak_name || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return !term || t.includes(term);
     });
 
-    if(!rows.length){ tbody.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">No matches.</td></tr>'; return; }
+    if (!rows.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="12" class="muted" style="text-align:center;padding:24px">No matches.</td></tr>';
+      return;
+    }
 
-    const { data: { user } } = await sb.auth.getUser();
+    const {
+      data: { user },
+    } = await sb.auth.getUser();
 
-    tbody.innerHTML = rows.map(p => {
-      // admin can also edit/delete everything
-      const mine = user && (p.owner === user.id || user.id === ADMIN_UID);
+    tbody.innerHTML = rows
+      .map((p) => {
+        const mine = user && p.owner === user.id; // owner can edit/delete
+        const cfgCell = p.cfg_text
+          ? `<button class="secondary" data-action="viewcfg" data-id="${p.id}">View CFG</button>`
+          : '<span class="muted">—</span>';
+        const pakCell = p.pak_url
+          ? `<a class="secondary" href="${escapeHtml(
+              p.pak_url
+            )}" download="${escapeHtml(p.pak_name || 'pak.zip')}">Download</a>`
+          : '<span class="muted">—</span>';
+        const actions = mine
+          ? `<button class="secondary" data-action="edit" data-id="${p.id}">Edit</button>
+             <button class="warn" data-action="delete" data-id="${p.id}">Delete</button>`
+          : '<span class="muted">—</span>';
 
-      const cfgCell = p.cfg_text
-        ? '<button class="secondary" data-action="viewcfg" data-id="'+p.id+'">View CFG</button>'
-        : '<span class="muted">—</span>';
-
-      const actions = mine
-        ? '<button class="secondary" data-action="edit" data-id="'+p.id+'">Edit</button> <button class="warn" data-action="delete" data-id="'+p.id+'">Delete</button>'
-        : '<span class="muted">—</span>';
-
-      return '<tr>'+
-        '<td><a class="nick" data-id="'+p.id+'">'+escapeHtml(p.nickname||'')+'</a></td>'+
-        '<td>'+escapeHtml(p.screen_hz||'')+'</td>'+
-        '<td>'+escapeHtml(p.headphones||'')+'</td>'+
-        '<td>'+escapeHtml(p.mouse||'')+'</td>'+
-        '<td>'+escapeHtml(p.keyboard||'')+'</td>'+
-        '<td class="num">'+(p.dpi||'')+'</td>'+
-        '<td class="num">'+(p.sens||'')+'</td>'+
-        '<td class="num">'+calcEdpi(p.dpi,p.sens)+'</td>'+
-        '<td class="center narrow">'+(p.zoom||'')+'</td>'+
-        '<td>'+cfgCell+'</td>'+
-        '<td style="text-align:right">'+actions+'</td>'+
-      '</tr>';
-    }).join('');
+        return `
+          <tr>
+            <td><a class="nick" data-id="${p.id}">${escapeHtml(p.nickname || '')}</a></td>
+            <td>${escapeHtml(p.screen_hz || '')}</td>
+            <td>${escapeHtml(p.headphones || '')}</td>
+            <td>${escapeHtml(p.mouse || '')}</td>
+            <td>${escapeHtml(p.keyboard || '')}</td>
+            <td class="num">${p.dpi || ''}</td>
+            <td class="num">${p.sens || ''}</td>
+            <td class="num">${calcEdpi(p.dpi, p.sens)}</td>
+            <td class="center narrow">${p.zoom || ''}</td>
+            <td>${cfgCell}</td>
+            <td>${pakCell}</td>
+            <td style="text-align:right">${actions}</td>
+          </tr>
+        `;
+      })
+      .join('');
   }
 
-  $('searchBar').addEventListener('input', loadProfiles);
-
-  // ---- CFG MODAL (pretty viewer) ----
-  let currentCfgUrl = null;
-
-  async function openCfgModal(id){
-    const { data, error } = await sb.from('profiles')
-      .select('nickname,cfg_name,cfg_text')
-      .eq('id', id).single();
-    if (error) return alert(error.message);
-    if (!data?.cfg_text) return alert('No CFG uploaded.');
-
-    $('cfgTitle').textContent = data.cfg_name
-      ? `${data.nickname} — ${data.cfg_name}`
-      : `${data.nickname} — config`;
-
-    $('cfgText').textContent = data.cfg_text;
-
-    // Create a blob URL so Download uses the right filename
-    if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
-    const blob = new Blob([data.cfg_text], { type: 'text/plain' });
-    currentCfgUrl = URL.createObjectURL(blob);
-    const a = $('downloadCfg');
-    a.href = currentCfgUrl;
-    a.download = data.cfg_name || `${data.nickname || 'config'}.cfg`;
-
-    $('cfgModal').classList.add('open');
+  if ($('searchBar')) {
+    $('searchBar').addEventListener('input', loadProfiles);
   }
-
-  $('closeCfg').addEventListener('click', () => {
-    $('cfgModal').classList.remove('open');
-    if (currentCfgUrl) { URL.revokeObjectURL(currentCfgUrl); currentCfgUrl = null; }
-  });
 
   // Delegated table actions
-  $('profilesBody').addEventListener('click', async (e)=>{
-    const a = e.target.closest('a.nick');
-    if(a){ const id = a.getAttribute('data-id'); openPlayer(id); return; }
-    const btn = e.target.closest('button'); if(!btn) return;
-    const id = btn.getAttribute('data-id');
-    const action = btn.getAttribute('data-action');
+  if ($('profilesBody')) {
+    $('profilesBody').addEventListener('click', async (e) => {
+      const a = e.target.closest('a.nick');
+      if (a) {
+        const id = a.getAttribute('data-id');
+        openPlayer(id);
+        return;
+      }
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      const id = btn.getAttribute('data-id');
+      const action = btn.getAttribute('data-action');
+      if (action === 'viewcfg') {
+        const { data, error } = await sb
+          .from('profiles')
+          .select('cfg_text')
+          .eq('id', id)
+          .single();
+        if (error) alert(error.message);
+        else alert(data.cfg_text || 'No CFG uploaded.');
+      } else if (action === 'edit') {
+        openEdit(id);
+      } else if (action === 'delete') {
+        if (confirm('Delete this profile?')) {
+          const { error } = await sb.from('profiles').delete().eq('id', id);
+          if (error) alert(error.message);
+          else loadProfiles();
+        }
+      }
+    });
+  }
 
-    if(action==='viewcfg'){
-      openCfgModal(id);
-    } else if(action==='edit'){
-      openEdit(id);
-    } else if(action==='delete'){
-      if(confirm('Delete this profile?')){
-        const { error } = await sb.from('profiles').delete().eq('id', id);
-        if(error) alert(error.message); else loadProfiles();
+  // Player modal (view)
+  async function openPlayer(id) {
+    const { data: p, error } = await sb.from('profiles').select('*').eq('id', id).single();
+    if (error || !p) return;
+
+    if ($('m_name')) $('m_name').textContent = p.nickname || '';
+    if ($('m_name_inline')) $('m_name_inline').textContent = p.nickname || '';
+    if ($('m_country')) $('m_country').textContent = p.country || '';
+    if ($('m_clan')) $('m_clan').textContent = p.clan || '';
+    if ($('m_map')) $('m_map').textContent = p.favorite_map || '';
+    if ($('m_about')) $('m_about').textContent = p.about || '';
+
+    const img = $('m_pic');
+    if (img) {
+      if (p.pic_url) {
+        img.src = p.pic_url;
+        img.style.objectFit = 'cover';
+        img.removeAttribute('width');
+        img.removeAttribute('height');
+      } else {
+        const ph =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">' +
+          '<rect width="100%" height="100%" fill="#0e1220" />' +
+          '<rect x="0.5" y="0.5" width="299" height="299" fill="none" stroke="#2a2f3d" />' +
+          '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-size="16" font-family="Arial, Helvetica, sans-serif">No picture available</text>' +
+          '</svg>';
+        img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(ph);
+        img.style.objectFit = 'contain';
+        img.width = 240;
+        img.height = 240;
       }
     }
-  });
 
-  // ---- Player info modal ----
-  async function openPlayer(id){
-    const { data: p, error } = await sb.from('profiles').select('*').eq('id', id).single();
-    if(error || !p) return;
-    $('m_name').textContent = p.nickname||'';
-    $('m_name_inline').textContent = p.nickname||'';
-    $('m_country').textContent = p.country||'';
-    $('m_clan').textContent = p.clan||'';
-    $('m_map').textContent = p.favorite_map||'';
-    $('m_about').textContent = p.about||'';
-    const img = $('m_pic');
-    if(p.pic_url){ img.src=p.pic_url; img.style.objectFit='cover'; img.removeAttribute('width'); img.removeAttribute('height'); }
-    else {
-      const ph = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">'+
-                 '<rect width="100%" height="100%" fill="#0e1220" />'+
-                 '<rect x="0.5" y="0.5" width="299" height="299" fill="none" stroke="#2a2f3d" />'+
-                 '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-size="16" font-family="Arial, Helvetica, sans-serif">No picture available</text>'+
-                 '</svg>';
-      img.src = 'data:image/svg+xml;utf8,'+encodeURIComponent(ph);
-      img.style.objectFit='contain'; img.width=240; img.height=240;
-    }
-    $('playerModal').classList.add('open');
+    if ($('playerModal')) $('playerModal').classList.add('open');
   }
-  $('closePlayer').addEventListener('click', ()=> $('playerModal').classList.remove('open'));
-
-  // ---- Add/Edit ----
-  $('addBtn').addEventListener('click', async ()=>{
-    const { data: { user } } = await sb.auth.getUser();
-    if(!user){ alert('Sign in to add a profile.'); return; }
-    openEdit(null);
-  });
-  $('cancelEdit').addEventListener('click', ()=> $('editModal').classList.remove('open'));
-
-  async function readCfg(file){
-    if(!file) return { name:null, text:null };
-    if(file.size > 200*1024) throw new Error('CFG too large (max 200KB).');
-    const text = await file.text();
-    for(let i=0;i<Math.min(64,text.length);i++){ if(text.charCodeAt(i)===0) throw new Error('Only text-based .cfg allowed'); }
-    return { name:file.name, text };
+  if ($('closePlayer')) {
+    $('closePlayer').addEventListener('click', () =>
+      $('playerModal').classList.remove('open')
+    );
   }
 
-  function openEdit(id){
-    $('editTitle').textContent = id? 'Edit Player' : 'Add Player';
-    $('e_id').value = id||'';
-    $('e_nick').value = '';
-    ['screen','head','mouse','keyboard','dpi','sens','zoom','country','clan','map','about'].forEach(k=> $('e_'+k).value='');
-    $('e_pic').value=''; $('e_cfg').value='';
+  // ---------- ADD / EDIT ----------
+  if ($('addBtn')) {
+    $('addBtn').addEventListener('click', async () => {
+      const {
+        data: { user },
+      } = await sb.auth.getUser();
+      if (!user) {
+        alert('Sign in with Discord to add a profile.');
+        return;
+      }
+      openEdit(null);
+    });
+  }
 
-    if(id){
-      sb.from('profiles').select('*').eq('id', id).single().then(({data:p,error})=>{
-        if(error||!p) return alert(error?.message||'Not found');
-        $('e_nick').value = p.nickname||'';
-        $('e_screen').value = p.screen_hz||'';
-        $('e_head').value = p.headphones||'';
-        $('e_mouse').value = p.mouse||'';
-        $('e_keyboard').value = p.keyboard||'';
-        $('e_dpi').value = p.dpi||'';
-        $('e_sens').value = p.sens||'';
-        $('e_zoom').value = p.zoom||'';
-        $('e_country').value = p.country||'';
-        $('e_clan').value = p.clan||'';
-        $('e_map').value = p.favorite_map||'';
-        $('e_about').value = p.about||'';
-      });
+  function resetEditForm() {
+    if (!$('editForm')) return;
+    $('editTitle').textContent = 'Add Player';
+    $('e_id').value = '';
+    ['nick', 'screen', 'head', 'mouse', 'keyboard', 'dpi', 'sens', 'zoom', 'country', 'clan', 'map', 'about'].forEach(
+      (k) => {
+        const el = $('e_' + k);
+        if (el) el.value = '';
+      }
+    );
+    if ($('e_pic')) $('e_pic').value = '';
+    if ($('e_cfg')) $('e_cfg').value = '';
+    if ($('e_pak')) $('e_pak').value = '';
+  }
+
+  function openEdit(id) {
+    resetEditForm();
+    $('editTitle').textContent = id ? 'Edit Player' : 'Add Player';
+    $('e_id').value = id || '';
+    if (id) {
+      sb
+        .from('profiles')
+        .select('*')
+        .eq('id', id)
+        .single()
+        .then(({ data: p, error }) => {
+          if (error || !p) {
+            alert(error?.message || 'Not found');
+            return;
+          }
+          $('e_nick').value = p.nickname || '';
+          $('e_screen').value = p.screen_hz || '';
+          $('e_head').value = p.headphones || '';
+          $('e_mouse').value = p.mouse || '';
+          $('e_keyboard').value = p.keyboard || '';
+          $('e_dpi').value = p.dpi || '';
+          $('e_sens').value = p.sens || '';
+          $('e_zoom').value = p.zoom || '';
+          $('e_country').value = p.country || '';
+          $('e_clan').value = p.clan || '';
+          $('e_map').value = p.favorite_map || '';
+          $('e_about').value = p.about || '';
+        });
     }
     $('editModal').classList.add('open');
   }
 
-  $('btnRemovePic').addEventListener('click', async ()=>{
-    const id = $('e_id').value;
-    if(!id){ alert('Open an existing profile to remove its pic.'); return; }
-    const { error } = await sb.from('profiles').update({ pic_url:null }).eq('id', id);
-    if(error) alert(error.message); else { alert('Profile picture removed.'); loadProfiles(); }
-  });
+  if ($('cancelEdit')) {
+    $('cancelEdit').addEventListener('click', () =>
+      $('editModal').classList.remove('open')
+    );
+  }
 
-  $('btnRemoveCfg').addEventListener('click', async ()=>{
-    const id = $('e_id').value;
-    if(!id){ alert('Open an existing profile to remove its CFG.'); return; }
-    const { error } = await sb.from('profiles').update({ cfg_text:null, cfg_name:null }).eq('id', id);
-    if(error) alert(error.message); else { alert('CFG removed.'); loadProfiles(); }
-  });
-
-  $('editForm').addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    const { data: { user } } = await sb.auth.getUser();
-    if(!user){ alert('Sign in to save.'); return; }
-
-    const id = $('e_id').value || null;
-    const rec = {
-      owner: user.id,
-      nickname: $('e_nick').value.trim(),
-      screen_hz: $('e_screen').value.trim(),
-      headphones: $('e_head').value.trim(),
-      mouse: $('e_mouse').value.trim(),
-      keyboard: $('e_keyboard').value.trim(),
-      dpi: Number($('e_dpi').value)||null,
-      sens: Number($('e_sens').value)||null,
-      zoom: Number($('e_zoom').value)||null,
-      country: $('e_country').value.trim(),
-      clan: $('e_clan').value.trim(),
-      favorite_map: $('e_map').value.trim(),
-      about: $('e_about').value.slice(0,1000)
-    };
-
-    if(!rec.nickname){ alert('Nickname required'); return; }
-
-    const picFile = $('e_pic').files[0] || null;
-    const cfgFile = $('e_cfg').files[0] || null;
-
-    try{
-      let rowId = id;
-      if(!rowId){
-        const { data, error } = await sb.from('profiles').insert(rec).select('id').single();
-        if(error) throw error; rowId = data.id;
-      } else {
-        const { error } = await sb.from('profiles').update(rec).eq('id', rowId);
-        if(error) throw error;
+  if ($('btnRemovePic')) {
+    $('btnRemovePic').addEventListener('click', async () => {
+      const id = $('e_id').value;
+      if (!id) {
+        alert('Open an existing profile to remove its pic.');
+        return;
       }
-
-      if(cfgFile){
-        const { name, text } = await readCfg(cfgFile);
-        const { error } = await sb.from('profiles').update({ cfg_name:name, cfg_text:text }).eq('id', rowId);
-        if(error) throw error;
+      const { error } = await sb.from('profiles').update({ pic_url: null }).eq('id', id);
+      if (error) alert(error.message);
+      else {
+        alert('Profile picture removed.');
+        loadProfiles();
       }
+    });
+  }
 
-      if(picFile){
-        if(picFile.size > 1000*1024) throw new Error('Image too large (max 1000KB).');
-        const ext = (picFile.name.split('.').pop()||'jpg').toLowerCase();
-        const path = `${(await sb.auth.getUser()).data.user.id}/${rowId}.${Date.now()}.${ext}`;
-        const { error: upErr } = await sb.storage.from(BUCKET).upload(path, picFile, { upsert: true, contentType: picFile.type });
-        if(upErr) throw upErr;
-        const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
-        const { error: updErr } = await sb.from('profiles').update({ pic_url: pub.publicUrl }).eq('id', rowId);
-        if(updErr) throw updErr;
+  if ($('btnRemoveCfg')) {
+    $('btnRemoveCfg').addEventListener('click', async () => {
+      const id = $('e_id').value;
+      if (!id) {
+        alert('Open an existing profile to remove its CFG.');
+        return;
       }
+      const { error } = await sb
+        .from('profiles')
+        .update({ cfg_text: null, cfg_name: null })
+        .eq('id', id);
+      if (error) alert(error.message);
+      else {
+        alert('CFG removed.');
+        loadProfiles();
+      }
+    });
+  }
 
-      $('editModal').classList.remove('open');
-      e.target.reset();
-      loadProfiles();
-    } catch(err){
-      const msg = String(err?.message || err);
-      if (msg.includes('profiles_owner_nickname_unique') || msg.includes('duplicate key') || err?.code === '23505') {
-        alert('You already have a player with that nickname. Try another.');
-      } else {
-        alert(msg);
+  if ($('btnRemovePak')) {
+    $('btnRemovePak').addEventListener('click', async () => {
+      const id = $('e_id').value;
+      if (!id) {
+        alert('Open an existing profile to remove its pak.');
+        return;
       }
+      const { error } = await sb
+        .from('profiles')
+        .update({ pak_url: null, pak_name: null })
+        .eq('id', id);
+      if (error) alert(error.message);
+      else {
+        alert('Pak removed.');
+        loadProfiles();
+      }
+    });
+  }
+
+  // Read CFG text from file (with size & "text-like" check)
+  async function readCfg(file) {
+    if (!file) return { name: null, text: null };
+    if (file.size > MAX_CFG_BYTES) throw new Error('CFG too large (max 200 KB).');
+    const text = await file.text();
+    for (let i = 0; i < Math.min(64, text.length); i++) {
+      if (text.charCodeAt(i) === 0) throw new Error('Only text-based .cfg allowed');
     }
-  });
+    return { name: file.name, text };
+  }
 
-  // ---- Logo uploader (admin only) ----
-  if ($('editLogoBtn')) {
-    $('editLogoBtn').addEventListener('click', async ()=>{
-      const { data: { user } } = await sb.auth.getUser();
-      if(!user || user.id !== ADMIN_UID){ alert('Only admin can change the logo.'); return; }
-      $('logoModal').classList.add('open');
-    });
+  // Submit (add/update)
+  if ($('editForm')) {
+    $('editForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
 
-    $('cancelLogo').addEventListener('click', ()=>{
-      $('logoModal').classList.remove('open');
-      $('logoFile').value = '';
-    });
+      const {
+        data: { user },
+      } = await sb.auth.getUser();
+      if (!user) {
+        alert('Sign in to save.');
+        return;
+      }
 
-    $('saveLogo').addEventListener('click', async ()=>{
-      const { data: { user } } = await sb.auth.getUser();
-      if(!user || user.id !== ADMIN_UID){ alert('Only admin can change the logo.'); return; }
+      const id = $('e_id').value || null;
+      const rec = {
+        owner: user.id,
+        nickname: $('e_nick').value.trim(),
+        screen_hz: $('e_screen').value.trim(),
+        headphones: $('e_head').value.trim(),
+        mouse: $('e_mouse').value.trim(),
+        keyboard: $('e_keyboard').value.trim(),
+        dpi: Number($('e_dpi').value) || null,
+        sens: Number($('e_sens').value) || null,
+        zoom: Number($('e_zoom').value) || null,
+        country: $('e_country').value.trim(),
+        clan: $('e_clan').value.trim(),
+        favorite_map: $('e_map').value.trim(),
+        about: $('e_about').value.slice(0, 1000),
+      };
 
-      const file = $('logoFile').files[0];
-      if(!file){ alert('Select an image first.'); return; }
-      if(file.size > 1000*1024){ alert('Image too large (max 1 MB).'); return; }
+      if (!rec.nickname) {
+        alert('Nickname required');
+        return;
+      }
 
-      try{
-        const { error: upErr } = await sb.storage.from(LOGO_BUCKET)
-          .upload(LOGO_KEY, file, { upsert: true, contentType: file.type });
-        if(upErr) throw upErr;
+      const picFile = $('e_pic')?.files?.[0] || null;
+      const cfgFile = $('e_cfg')?.files?.[0] || null;
+      const pakFile = $('e_pak')?.files?.[0] || null;
 
-        // Refresh the header image (cache-bust)
-        const img = $('logoImg');
-        const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/${LOGO_BUCKET}/${LOGO_KEY}`;
-        img.src = `${baseUrl}?v=${Date.now()}`;
+      try {
+        // upsert base row first
+        let rowId = id;
+        if (!rowId) {
+          const { data, error } = await sb.from('profiles').insert(rec).select('id').single();
+          if (error) throw error;
+          rowId = data.id;
+        } else {
+          const { error } = await sb.from('profiles').update(rec).eq('id', rowId);
+          if (error) throw error;
+        }
 
-        $('logoModal').classList.remove('open');
-        $('logoFile').value = '';
-      } catch(err){
+        // CFG (text)
+        if (cfgFile) {
+          const { name, text } = await readCfg(cfgFile);
+          const { error } = await sb
+            .from('profiles')
+            .update({ cfg_name: name, cfg_text: text })
+            .eq('id', rowId);
+          if (error) throw error;
+        }
+
+        // Picture upload → public URL
+        if (picFile) {
+          if (picFile.size > MAX_IMG_BYTES) throw new Error('Image too large (max 5 MB).');
+          const ext = (picFile.name.split('.').pop() || 'jpg').toLowerCase();
+          const path = `${user.id}/${rowId}.${Date.now()}.${ext}`;
+          const { error: upErr } = await sb.storage
+            .from(BUCKET_PICS)
+            .upload(path, picFile, { upsert: true, contentType: picFile.type });
+          if (upErr) throw upErr;
+          const { data: pub } = sb.storage.from(BUCKET_PICS).getPublicUrl(path);
+          const { error: updErr } = await sb
+            .from('profiles')
+            .update({ pic_url: pub.publicUrl })
+            .eq('id', rowId);
+          if (updErr) throw updErr;
+        }
+
+        // Pak upload → public URL
+        if (pakFile) {
+          if (pakFile.size > MAX_PAK_BYTES)
+            throw new Error('Pak too large (max 50 MB).');
+          const ext = (pakFile.name.split('.').pop() || 'zip').toLowerCase();
+          const path = `${user.id}/${rowId}.${Date.now()}.${ext}`;
+          const { error: upErr } = await sb.storage
+            .from(BUCKET_PAKS)
+            .upload(path, pakFile, { upsert: true, contentType: pakFile.type });
+          if (upErr) throw upErr;
+          const { data: pub } = sb.storage.from(BUCKET_PAKS).getPublicUrl(path);
+          const { error: updErr } = await sb
+            .from('profiles')
+            .update({ pak_url: pub.publicUrl, pak_name: pakFile.name })
+            .eq('id', rowId);
+          if (updErr) throw updErr;
+        }
+
+        $('editModal').classList.remove('open');
+        e.target.reset();
+        loadProfiles();
+      } catch (err) {
         alert(err.message || String(err));
       }
     });
   }
 
-  // Init
-  function init(){ loadLogo(); refreshSessionUI(); loadProfiles(); }
-  init();
+  // ---------- INIT ----------
+  function init() {
+    loadLogo();        // NEW: load header logo from Storage
+    refreshSessionUI();
+    loadProfiles();
+  }
 
+  init();
 })();
